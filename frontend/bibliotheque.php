@@ -3,6 +3,12 @@ session_start();
 require_once '../backend/Database.php';
 $pdo = Database::connect();
 
+// Vérifier si l'utilisateur est connecté
+if (!isset($_SESSION['user_id'])) {
+  header("Location: auth.php?redirect=bibliotheque.php");
+  exit();
+}
+
 // Récupérer les filtres
 $type = $_GET['type'] ?? 'conte';
 $search = $_GET['search'] ?? '';

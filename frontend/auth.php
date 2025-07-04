@@ -94,7 +94,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
                 }
                 
                 // Redirection
-                header("Location: explore.php");
+                if($user['role'] == 'admin')
+                  header("Location: admin.php");
+                else
+                  header("Location: explore.php");
                 exit();
             } else {
                 $errors[] = "Identifiants incorrects";

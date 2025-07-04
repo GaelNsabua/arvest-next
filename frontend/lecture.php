@@ -3,6 +3,12 @@ session_start();
 require_once '../backend/Database.php';
 $pdo = Database::connect();
 
+// Vérifier si l'utilisateur est connecté
+if (!isset($_SESSION['user_id'])) {
+  header("Location: auth.php?redirect=lecture.php?id=" . $_GET['id']);
+  exit();
+}
+
 // Récupérer l'ID de l'œuvre depuis l'URL
 $oeuvre_id = $_GET['id'] ?? 0;
 

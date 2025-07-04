@@ -292,7 +292,7 @@ try {
         <button class="category-btn px-6 py-3 rounded-full bg-orange-500 text-white font-semibold shadow active-category">Tous</button>
         <button onclick="window.location.href='bibliotheque.php?type=conte'" class="category-btn px-6 py-3 rounded-full bg-white text-gray-700 font-semibold shadow hover:bg-orange-100 hover:text-orange-600 transition">Contes</button>
         <button onclick="window.location.href='bibliotheque.php?type=proverbe'" class="category-btn px-6 py-3 rounded-full bg-white text-gray-700 font-semibold shadow hover:bg-orange-100 hover:text-orange-600 transition">Proverbes</button>
-        <button onclick="window.location.href='bibliotheque.php?type=couteume'" class="category-btn px-6 py-3 rounded-full bg-white text-gray-700 font-semibold shadow hover:bg-orange-100 hover:text-orange-600 transition">Coutumes</button>
+        <button onclick="window.location.href='bibliotheque.php?type=coutume'" class="category-btn px-6 py-3 rounded-full bg-white text-gray-700 font-semibold shadow hover:bg-orange-100 hover:text-orange-600 transition">Coutumes</button>
         <button onclick="window.location.href='bibliotheque.php?type=sage'" class="category-btn px-6 py-3 rounded-full bg-white text-gray-700 font-semibold shadow hover:bg-orange-100 hover:text-orange-600 transition">Sagesse</button>
         <button onclick="window.location.href='bibliotheque.php?type=langue'" class="category-btn px-6 py-3 rounded-full bg-white text-gray-700 font-semibold shadow hover:bg-orange-100 hover:text-orange-600 transition">Langues</button>
       </div>
