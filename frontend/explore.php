@@ -1,3 +1,94 @@
+<?php
+session_start();
+require_once '../backend/Database.php';
+$pdo = Database::connect();
+
+// Vérifier si l'utilisateur est connecté
+if (!isset($_SESSION['user_id'])) {
+  header("Location: auth.php?redirect=explore.php");
+  exit();
+}
+
+// Récupérer les publications (oeuvres validées) avec informations auteur
+$queryPublications = "SELECT 
+                        o.id, o.titre, o.contenu, o.date_publication, o.type,
+                        u.id AS auteur_id, u.pseudo AS auteur, u.photo AS auteur_photo,
+                        (SELECT COUNT(*) FROM likes l WHERE l.oeuvre_id = o.id) AS likes_count,
+                        (SELECT COUNT(*) FROM commentaires c WHERE c.oeuvre_id = o.id) AS comment_count
+                      FROM oeuvres o
+                      JOIN utilisateurs u ON o.utilisateur_id = u.id
+                      WHERE o.statut = 'valide'
+                      ORDER BY o.date_publication DESC
+                      LIMIT 10";
+
+$publications = [];
+try {
+    $stmt = $pdo->prepare($queryPublications);
+    $stmt->execute();
+    $publications = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    error_log("Erreur publications: " . $e->getMessage());
+}
+
+// Récupérer les commentaires pour chaque publication
+foreach ($publications as &$pub) {
+    $queryComments = "SELECT c.id, c.contenu, c.date_commentaire,
+                             u.pseudo AS user_pseudo, u.photo AS user_photo
+                      FROM commentaires c
+                      JOIN utilisateurs u ON c.utilisateur_id = u.id
+                      WHERE c.oeuvre_id = :oeuvre_id
+                      ORDER BY c.date_commentaire DESC
+                      LIMIT 3";
+    
+    try {
+        $stmt = $pdo->prepare($queryComments);
+        $stmt->bindParam(':oeuvre_id', $pub['id'], PDO::PARAM_INT);
+        $stmt->execute();
+        $pub['comments'] = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    } catch (PDOException $e) {
+        error_log("Erreur commentaires: " . $e->getMessage());
+        $pub['comments'] = [];
+    }
+}
+
+// Récupérer les suggestions d'auteurs (les plus actifs)
+$queryAuteurs = "SELECT u.id, u.pseudo, u.photo,
+                        COUNT(o.id) AS oeuvres_count
+                 FROM utilisateurs u
+                 JOIN oeuvres o ON u.id = o.utilisateur_id
+                 WHERE o.statut = 'valide'
+                 GROUP BY u.id
+                 ORDER BY oeuvres_count DESC
+                 LIMIT 3";
+
+$auteursSuggestions = [];
+try {
+    $stmt = $pdo->prepare($queryAuteurs);
+    $stmt->execute();
+    $auteursSuggestions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    error_log("Erreur auteurs: " . $e->getMessage());
+}
+
+// Récupérer les nouveautés pour le carousel
+$queryNouveautes = "SELECT o.id, o.titre, o.type,
+                           u.pseudo AS auteur
+                    FROM oeuvres o
+                    JOIN utilisateurs u ON o.utilisateur_id = u.id
+                    WHERE o.statut = 'valide'
+                    ORDER BY o.date_publication DESC
+                    LIMIT 4";
+
+$nouveautes = [];
+try {
+    $stmt = $pdo->prepare($queryNouveautes);
+    $stmt->execute();
+    $nouveautes = $stmt->fetchAll(PDO::FETCH_ASSOC);
+} catch (PDOException $e) {
+    error_log("Erreur nouveautés: " . $e->getMessage());
+}
+?>
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -12,7 +103,7 @@
   <!-- NAVBAR -->
   <?php include './components/navbar.php'; ?>
 
-  <!-- HERO BANNER NOUVEAUTÉS (carousel style index) -->
+  <!-- HERO BANNER NOUVEAUTÉS -->
   <section class="relative w-full flex justify-center mt-24">
     <div class="relative w-[85vw] max-w-6xl h-[420px] rounded-3xl overflow-hidden shadow-lg flex items-center bg-gray-900">
       <div class="absolute inset-0 z-0">
@@ -41,82 +132,91 @@
     </div>
   </section>
 
-  <!-- CAROUSEL NOUVEAUTÉS (horizontal, pas de scrollbar) -->
+  <!-- CAROUSEL NOUVEAUTÉS -->
   <section class="w-[85vw] max-w-7xl mx-auto mt-16 px-4">
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-2xl md:text-3xl font-bold text-orange-600">Nouveautés</h2>
-      <a href="#" class="text-orange-600 font-semibold hover:underline">Tout voir</a>
+      <a href="bibliotheque.php" class="text-orange-600 font-semibold hover:underline">Tout voir</a>
     </div>
     <div class="flex gap-8 overflow-x-auto pb-4 snap-x snap-mandatory no-scrollbar carousel-nouveautes">
-      <!-- Cartes nouveauté (exemple) -->
+      <?php foreach ($nouveautes as $index => $nouveaute): 
+        // Déterminer l'image en fonction du type
+        $imageFolder = 'contes';
+        $imageName = 'offer-conte.jpg';
+        
+        if ($nouveaute['type'] === 'proverbe') {
+            $imageFolder = 'proverbes';
+            $imageName = 'offer-proverbe.jpg';
+        } else if ($nouveaute['type'] === 'recit') {
+            $imageFolder = 'themes';
+            $imageName = 'offer-theme.jpg';
+        }
+      ?>
       <div class="min-w-[340px] max-w-[340px] bg-white rounded-2xl shadow-lg flex flex-col overflow-hidden snap-center hover:shadow-xl transition">
-        <img src="../assets/Explorer/offer-conte.jpg" alt="Nouveauté" class="w-full h-48 object-cover">
+        <img src="../assets/Explorer/<?= $imageName ?>" alt="Nouveauté" class="w-full h-48 object-cover">
         <div class="flex flex-col p-6 flex-1">
-          <div class="font-bold text-xl text-[#1b263b] mb-1">Le lion et le lièvre</div>
-          <div class="text-sm text-orange-600 mb-2">Conte traditionnel • 4.8 ★</div>
-          <div class="text-gray-600 text-sm">Un conte populaire du Katanga sur la ruse et le courage.</div>
+          <div class="font-bold text-xl text-[#1b263b] mb-1"><?= htmlspecialchars($nouveaute['titre']) ?></div>
+          <div class="text-sm text-orange-600 mb-2">
+            <?= htmlspecialchars(ucfirst($nouveaute['type'])) ?> • <?= htmlspecialchars($nouveaute['auteur']) ?>
+          </div>
+          <div class="text-gray-600 text-sm">Découvrez cette nouvelle œuvre partagée par notre communauté.</div>
         </div>
       </div>
-      <div class="min-w-[340px] max-w-[340px] bg-white rounded-2xl shadow-lg flex flex-col overflow-hidden snap-center hover:shadow-xl transition">
-        <img src="../assets/Explorer/offer-proverbe.jpg" alt="Nouveauté" class="w-full h-48 object-cover">
-        <div class="flex flex-col p-6 flex-1">
-          <div class="font-bold text-xl text-[#1b263b] mb-1">"La patience est une vertu"</div>
-          <div class="text-sm text-orange-600 mb-2">Proverbe • 4.7 ★</div>
-          <div class="text-gray-600 text-sm">Un proverbe qui enseigne la sagesse et la persévérance.</div>
-        </div>
-      </div>
-      <div class="min-w-[340px] max-w-[340px] bg-white rounded-2xl shadow-lg flex flex-col overflow-hidden snap-center hover:shadow-xl transition">
-        <img src="../assets/Explorer/offer-theme.jpg" alt="Nouveauté" class="w-full h-48 object-cover">
-        <div class="flex flex-col p-6 flex-1">
-          <div class="font-bold text-xl text-[#1b263b] mb-1">Thème : Animaux</div>
-          <div class="text-sm text-orange-600 mb-2">+120 histoires</div>
-          <div class="text-gray-600 text-sm">Découvrez les contes et proverbes mettant en scène les animaux.</div>
-        </div>
-      </div>
-      <div class="min-w-[340px] max-w-[340px] bg-white rounded-2xl shadow-lg flex flex-col overflow-hidden snap-center hover:shadow-xl transition">
-        <img src="../assets/Explorer/offer-auteur.jpg" alt="Nouveauté" class="w-full h-48 object-cover">
-        <div class="flex flex-col p-6 flex-1">
-          <div class="font-bold text-xl text-[#1b263b] mb-1">Auteur : M. Kalaba</div>
-          <div class="text-sm text-orange-600 mb-2">Conteur • 4.9 ★</div>
-          <div class="text-gray-600 text-sm">Un des plus grands conteurs du Katanga, gardien de la tradition orale.</div>
-        </div>
-      </div>
+      <?php endforeach; ?>
     </div>
   </section>
 
-  <!-- PUBLICATIONS FEED (nouveau concept, grille pleine largeur) -->
+  <!-- PUBLICATIONS FEED -->
   <section id="feed" class="w-[85vw] max-w-7xl mx-auto mt-16 px-2 flex flex-col gap-8">
-    <!-- Publication 1 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="1">
+    <?php foreach ($publications as $index => $pub): 
+      // Déterminer l'image en fonction du type
+      $imageIndex = ($index % 9) + 1;
+      $imageFolder = 'contes';
+      $imageName = "conte$imageIndex.jpg";
+      
+      if ($pub['type'] === 'proverbe') {
+          $imageFolder = 'proverbes';
+          $imageName = "proverbe$imageIndex.jpg";
+      } else if ($pub['type'] === 'recit') {
+          $imageFolder = 'coutumes';
+          $imageIndex = ($index % 3) + 1;
+          $imageName = "coutume$imageIndex.jpg";
+      }
+    ?>
+    <!-- Publication -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="<?= $pub['id'] ?>">
       <!-- Bloc publication gauche -->
       <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
         <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
+          <img src="<?= htmlspecialchars($pub['auteur_photo'] ? '../uploads/avatars/'.$pub['auteur_photo'] : '../assets/profile/default.jpg') ?>" 
+               alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
           <div>
-            <div class="font-bold text-lg text-orange-600">Emmanuel N.</div>
+            <div class="font-bold text-lg text-orange-600"><?= htmlspecialchars($pub['auteur']) ?></div>
             <div class="flex items-center gap-2">
               <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">1.2k followers</span>
+              <span class="text-xs text-gray-500 ml-2"><?= $pub['likes_count'] ?> likes</span>
             </div>
-            <div class="text-xs text-gray-400 mt-1">12 œuvres</div>
+            <div class="text-xs text-gray-400 mt-1"><?= $pub['comment_count'] ?> commentaires</div>
           </div>
         </div>
         <div class="flex flex-row gap-4">
           <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">Le léopard et la tortue</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte du Kasaï sur la ruse et la sagesse face à la force brute. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque euismod, nisi eu consectetur consectetur, nisl nisi consectetur nisi, euismod euismod nisi nisi euismod.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
+            <div class="text-xl font-bold text-[#1b263b] mb-1"><?= htmlspecialchars($pub['titre']) ?></div>
+            <div class="text-gray-600 text-sm mb-2 line-clamp-4">
+              <?= htmlspecialchars(substr($pub['contenu'], 0, 200)) ?>...
+            </div>
+            <a href="lecture.php?id=<?= $pub['id'] ?>" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
           </div>
-          <img src="../assets/Explorer/conte1.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
+          <img src="../assets/Explorer/<?= $imageName ?>" alt="Publication" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
         </div>
         <div class="flex items-center gap-8 mt-4">
           <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
             <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">12</span>
+            <span class="like-count"><?= $pub['likes_count'] ?></span>
           </button>
           <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
             <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">3</span>
+            <span class="comment-count"><?= $pub['comment_count'] ?></span>
           </button>
           <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
             <i class="bx bx-share-alt text-2xl"></i>
@@ -124,673 +224,57 @@
           </button>
         </div>
       </div>
+      
       <!-- Bloc commentaires droite -->
       <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
         <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
         <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile2.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Superbe histoire !</div>
-          </div>
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile3.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">J'adore la morale.</div>
-          </div>
+          <?php if (!empty($pub['comments'])): ?>
+            <?php foreach ($pub['comments'] as $comment): ?>
+              <div class="flex items-start gap-3">
+                <img src="<?= htmlspecialchars($comment['user_photo'] ? '../uploads/avatars/'.$comment['user_photo'] : '../assets/profile/default.jpg') ?>" 
+                     class="w-10 h-10 rounded-full object-cover" alt="User">
+                <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">
+                  <strong><?= htmlspecialchars($comment['user_pseudo']) ?>:</strong> 
+                  <?= htmlspecialchars($comment['contenu']) ?>
+                </div>
+              </div>
+            <?php endforeach; ?>
+          <?php else: ?>
+            <p class="text-gray-500 text-sm">Aucun commentaire pour l'instant</p>
+          <?php endif; ?>
         </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8" 
+              action="../backend/add_comment.php" method="POST">
+          <input type="hidden" name="oeuvre_id" value="<?= $pub['id'] ?>">
+          <input type="text" name="contenu" placeholder="Ajouter un commentaire..." required
+                 class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400">
           <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
         </form>
       </div>
     </div>
-    <!-- Publication 2 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="2">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile2.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Sophie M.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">2.1k followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">8 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">« La patience est une vertu »</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un proverbe qui enseigne la sagesse et la persévérance. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Pellentesque euismod, nisi eu consectetur consectetur, nisl nisi consectetur nisi, euismod euismod nisi nisi euismod.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/proverbe1.jpg" alt="Proverbe" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">8</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">1</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Très vrai !</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-    <!-- Publication 3 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="3">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile3.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Patrick K.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">1.8k followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">10 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">Les sages et le roi</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte inspirant sur le leadership et l'humilité. Découvrez comment un roi apprend des leçons précieuses de ses sujets. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte2.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">15</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">5</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <a href="profile-other.html"><img src="../assets/profile/profile4.jpg" class="w-10 h-10 rounded-full object-cover" alt="User"></a>
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Une belle leçon !</div>
-          </div>
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile5.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">À méditer...</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-    <!-- Publication 4 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="4">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile4.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Isabelle T.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">900 followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">5 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">Le serpent et la grenouille</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte sur l'amitié et la trahison. Découvrez comment un serpent et une grenouille apprennent à se connaître et à se méfier. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte3.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">10</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">2</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile1.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Une histoire captivante !</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-    <!-- Publication 5 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="5">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile5.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Marc L.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">750 followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">3 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">Le rat et l'éléphant</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte sur la force de l'amitié et la solidarité. Découvrez comment un rat et un éléphant s'entraident dans les moments difficiles. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte4.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">20</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">8</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile2.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Une belle histoire d'amitié.</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-    <!-- Publication 6 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="6">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile6.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Claire R.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">620 followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">7 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">Le hibou et les étoiles</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte poétique sur la sagesse et la connaissance. Découvrez comment un hibou transmet son savoir aux étoiles. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte5.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">18</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">6</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile3.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Un conte magnifique !</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-    <!-- Publication 7 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="7">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile7.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Lucas D.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">480 followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">6 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">Le chasseur et la biche</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte sur la préservation de la nature et le respect des animaux. Découvrez l'histoire d'un chasseur qui change sa vision grâce à une biche. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte6.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">22</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">7</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile4.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Un très beau conte.</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-    <!-- Publication 8 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="8">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile8.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Emma B.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">350 followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">4 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">La tortue et le héron</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte sur la persévérance et l'entraide. Découvrez comment une tortue et un héron surmontent les obstacles ensemble. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte7.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">17</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">4</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile5.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Une belle morale.</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-    <!-- Publication 9 -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="9">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile9.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Noah J.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">220 followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">2 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">Le loup et le chien</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte sur la loyauté et la trahison. Découvrez l'histoire d'un loup et d'un chien qui font face à des choix difficiles. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte8.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">9</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">3</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile6.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Une histoire pleine d'enseignements.</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-    <!-- Publication 10 (dernière, margin-bottom 16) -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="10">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile10.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Chloé G.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">180 followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">1 œuvre</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">Le voyageur et la mer</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte sur la découverte de soi et l'aventure. Suivez le voyage d'un homme à la recherche de sa véritable identité. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte9.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">5</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">1</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile7.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Un récit inspirant.</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
+    <?php endforeach; ?>
   </section>
 
-  <!-- CAROUSEL SUGGESTIONS (auteurs à suivre, contes à lire, etc.) -->
+  <!-- CAROUSEL SUGGESTIONS D'AUTEURS -->
   <section class="w-[85vw] max-w-7xl mx-auto mt-20 px-4">
     <h2 class="text-2xl md:text-3xl font-bold text-orange-600 mb-8">Suggestions d'auteurs à suivre</h2>
     <div class="flex gap-8 overflow-x-auto pb-4 snap-x snap-mandatory no-scrollbar carousel-suggestions">
+      <?php foreach ($auteursSuggestions as $auteur): ?>
       <div class="min-w-[260px] max-w-[260px] bg-white rounded-2xl shadow-lg flex flex-col items-center p-6 hover:shadow-xl transition snap-center">
-        <img src="../assets/profile/profile.jpg" alt="Auteur" class="w-24 h-24 rounded-full object-cover border-2 border-orange-200 mb-3">
-        <div class="font-bold text-lg text-orange-600 mb-1">Emmanuel N.</div>
-        <div class="text-xs text-gray-500 mb-2">1.2k followers</div>
-        <div class="text-gray-700 text-sm mb-2">Conteur, passionné de traditions orales.</div>
+        <img src="<?= htmlspecialchars($auteur['photo'] ? '../uploads/avatars/'.$auteur['photo'] : '../assets/profile/default.jpg') ?>" 
+             alt="Auteur" class="w-24 h-24 rounded-full object-cover border-2 border-orange-200 mb-3">
+        <div class="font-bold text-lg text-orange-600 mb-1"><?= htmlspecialchars($auteur['pseudo']) ?></div>
+        <div class="text-xs text-gray-500 mb-2"><?= $auteur['oeuvres_count'] ?> œuvres</div>
+        <div class="text-gray-700 text-sm mb-2">Auteur passionné de notre communauté</div>
         <button class="px-4 py-2 bg-orange-500 text-white rounded-full font-semibold hover:bg-orange-600 transition text-sm">Suivre</button>
       </div>
-      <div class="min-w-[260px] max-w-[260px] bg-white rounded-2xl shadow-lg flex flex-col items-center p-6 hover:shadow-xl transition snap-center">
-        <img src="../assets/profile/profile2.jpg" alt="Auteur" class="w-24 h-24 rounded-full object-cover border-2 border-orange-200 mb-3">
-        <div class="font-bold text-lg text-orange-600 mb-1">Sophie M.</div>
-        <div class="text-xs text-gray-500 mb-2">2.1k followers</div>
-        <div class="text-gray-700 text-sm mb-2">Collectrice de proverbes et récits populaires.</div>
-        <button class="px-4 py-2 bg-orange-500 text-white rounded-full font-semibold hover:bg-orange-600 transition text-sm">Suivre</button>
-      </div>
-      <div class="min-w-[260px] max-w-[260px] bg-white rounded-2xl shadow-lg flex flex-col items-center p-6 hover:shadow-xl transition snap-center">
-        <img src="../assets/profile/profile3.jpg" alt="Auteur" class="w-24 h-24 rounded-full object-cover border-2 border-orange-200 mb-3">
-        <div class="font-bold text-lg text-orange-600 mb-1">Patrick K.</div>
-        <div class="text-xs text-gray-500 mb-2">1.8k followers</div>
-        <div class="text-gray-700 text-sm mb-2">Gardien des coutumes et traditions locales.</div>
-        <button class="px-4 py-2 bg-orange-500 text-white rounded-full font-semibold hover:bg-orange-600 transition text-sm">Suivre</button>
-      </div>
+      <?php endforeach; ?>
     </div>
   </section>
 
-  <!-- Publications supplémentaires après suggestions -->
-  <section class="w-[85vw] max-w-7xl mx-auto mt-16 px-2 flex flex-col gap-8">
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="11">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile4.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Isabelle T.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">1.1k followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">9 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">Le baobab magique</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte sur la force de la nature et la magie des arbres sacrés. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte10.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">13</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">2</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile2.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">J'adore ce conte !</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="12">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile5.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Marc L.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">1.4k followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">11 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">La rivière et le soleil</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte sur la persévérance et la lumière intérieure. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte11.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">7</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">1</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile3.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Merci pour ce partage !</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8 items-stretch publication mb-8" data-id="13">
-      <div class="bg-white rounded-2xl shadow-lg flex flex-col p-8 gap-4 relative h-full">
-        <div class="flex items-center gap-4 mb-2">
-          <img src="../assets/profile/profile6.jpg" alt="Auteur" class="w-16 h-16 rounded-2xl object-cover border-2 border-orange-200 shadow">
-          <div>
-            <div class="font-bold text-lg text-orange-600">Claire R.</div>
-            <div class="flex items-center gap-2">
-              <button class="px-3 py-1 bg-orange-100 text-orange-600 rounded-full text-xs font-semibold hover:bg-orange-200 transition">Suivre</button>
-              <span class="text-xs text-gray-500 ml-2">1.7k followers</span>
-            </div>
-            <div class="text-xs text-gray-400 mt-1">14 œuvres</div>
-          </div>
-        </div>
-        <div class="flex flex-row gap-4">
-          <div class="flex-1">
-            <div class="text-xl font-bold text-[#1b263b] mb-1">Le singe et la lune</div>
-            <div class="text-gray-600 text-sm mb-2 line-clamp-4">Un conte sur la curiosité et l'aventure. Lorem ipsum dolor sit amet, consectetur adipiscing elit.</div>
-            <a href="#" class="text-orange-600 text-xs font-semibold hover:underline">Lire la suite</a>
-          </div>
-          <img src="../assets/Explorer/conte12.jpg" alt="Conte" class="w-32 h-32 object-cover rounded-xl border border-orange-100">
-        </div>
-        <div class="flex items-center gap-8 mt-4">
-          <button class="pub-like-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition" data-liked="false">
-            <i class="bx bx-heart text-2xl"></i>
-            <span class="like-count">11</span>
-          </button>
-          <button class="pub-comment-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-message-rounded text-2xl"></i>
-            <span class="comment-count">2</span>
-          </button>
-          <button class="pub-share-btn flex items-center gap-2 text-orange-500 font-semibold hover:scale-110 transition">
-            <i class="bx bx-share-alt text-2xl"></i>
-            <span>Partager</span>
-          </button>
-        </div>
-      </div>
-      <div class="bg-orange-50 rounded-2xl shadow flex flex-col p-8 gap-4 h-full pub-comments-block relative min-h-[320px]">
-        <div class="font-semibold text-orange-600 mb-2">Commentaires</div>
-        <div class="flex flex-col gap-3 pub-comments flex-1">
-          <div class="flex items-start gap-3">
-            <img src="../assets/profile/profile4.jpg" class="w-10 h-10 rounded-full object-cover" alt="User">
-            <div class="bg-white rounded-xl px-4 py-2 text-sm text-gray-800 shadow">Superbe !</div>
-          </div>
-        </div>
-        <form class="flex items-center gap-2 mt-2 pub-comment-form absolute bottom-8 left-8 right-8">
-          <input type="text" placeholder="Ajouter un commentaire..." class="flex-1 px-3 py-2 rounded-full bg-gray-50 border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
-          <button type="submit" class="text-orange-600 font-bold">Envoyer</button>
-        </form>
-      </div>
-    </div>
-  </section>
   <script>
-    // Carousel dynamique pour la bannière (même logique que sur index)
+    // Carousel dynamique pour la bannière
     const heroSlides = [
       {
         img: "../assets/Explorer/explorer-hero.jpg",
@@ -809,6 +293,7 @@
       }
     ];
     let heroCurrent = 0;
+    
     function updateHeroBanner(idx) {
       const slide = heroSlides[idx];
       document.getElementById('explore-hero-bg').src = slide.img;
@@ -821,17 +306,20 @@
         dot.classList.toggle('opacity-60', i !== idx);
       });
     }
+    
     document.querySelectorAll('#explore-hero-dots button').forEach((dot, i) => {
       dot.addEventListener('click', () => {
         heroCurrent = i;
         updateHeroBanner(heroCurrent);
       });
     });
+    
     setInterval(() => {
       heroCurrent = (heroCurrent + 1) % heroSlides.length;
       updateHeroBanner(heroCurrent);
     }, 6000);
   </script>
+  
   <style>
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }

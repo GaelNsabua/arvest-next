@@ -97,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['login'])) {
                 if($user['role'] == 'admin')
                   header("Location: admin.php");
                 else
-                  header("Location: explore.php");
+                  header("Location: bibliotheque.php");
                 exit();
             } else {
                 $errors[] = "Identifiants incorrects";

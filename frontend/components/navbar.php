@@ -3,7 +3,7 @@
     <!-- Logo -->
     <div class="flex items-center">
       <a href="index.php">
-        <img src="../assets/logo.png" alt="Logo Arvest" class="h-10 w-auto" />
+        <img src="https://ik.imagekit.io/melfuviii/Arvest/assets/logo.png" alt="Logo Arvest" class="h-10 w-auto" />
       </a>
     </div>
     <!-- Navigation links -->
